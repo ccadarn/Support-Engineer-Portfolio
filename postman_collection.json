@@ -1,0 +1,197 @@
+{
+  "info": {
+    "_postman_id": "8bba702e-832b-47a7-840c-6af2a04ac35d",
+    "name": "API Investigation Practice: Testing for Silent Failures",
+    "description": "A portfolio scenario simulating investigation of a PMS booking-sync integration. Each request targets a failure mode that support engineers commonly diagnose: missing required fields, invalid auth tokens, and unenforced rate limits. jsonplaceholder.typicode.com is a mock API with no real validation, auth enforcement, or throttling logic. That absence is used deliberately here: each 'failure' request documents what the API SHOULD have rejected but didn't, and what that means for a downstream system like Oracle Opera PMS that assumes upstream validation happened. This mirrors how silent failures actually surface in production: not as loud errors, but as bad data that breaks something several steps downstream.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "56499096"
+  },
+  "item": [
+    {
+      "name": "API Investigation Practice",
+      "item": [
+        {
+          "name": "200 - baseline valid user lookup",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {\r",
+                  "    pm.response.to.have.status(200);\r",
+                  "});\r",
+                  "\r",
+                  "pm.test(\"Response has expected user id\", function () {\r",
+                  "    const data = pm.response.json();\r",
+                  "    pm.expect(data.id).to.eql(1);\r",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/1",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "1"]
+            },
+            "description": "Baseline control case. Confirms the endpoint and test harness work correctly before introducing failure conditions. Every investigation needs a known-good case to compare against."
+          },
+          "response": []
+        },
+        {
+          "name": "404 - user not found",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 404\", function () {\r",
+                  "    pm.response.to.have.status(404);\r",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/9999",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "9999"]
+            },
+            "description": "Requests a resource ID that does not exist. This is a 'loud' failure: the API correctly reports 404, so a client integration would catch this immediately rather than silently proceeding with bad data."
+          },
+          "response": []
+        },
+        {
+          "name": "SILENT FAILURE - malformed payload missing required fields accepted",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 201 (resource created despite malformed payload)\", function () {\r",
+                  "    pm.response.to.have.status(201);\r",
+                  "});\r",
+                  "\r",
+                  "pm.test(\"SILENT FAILURE: no server-side field validation occurred\", function () {\r",
+                  "    const data = pm.response.json();\r",
+                  "    pm.expect(data).to.have.property('id');\r",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\r\n  \"amount\": 49.99,\r\n  \"cvv\": \"123\"\r\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/posts",
+              "host": ["{{baseUrl}}"],
+              "path": ["posts"]
+            },
+            "description": "Sends a payload missing the fields the endpoint would normally expect (title, body, userId). Real finding: the API accepts it and returns 201 instead of rejecting it with 400. In a PMS booking-sync context, this maps to a check-in date or room-type field missing from a booking record; the sync accepts the incomplete record, and the failure only surfaces later when a downstream system (e.g. Opera) tries to process it. That gap between where the bad data entered and where it broke is exactly what makes silent failures expensive to trace."
+          },
+          "response": []
+        },
+        {
+          "name": "SILENT FAILURE - invalid auth token not rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"SILENT FAILURE: invalid bearer token still returns 200 (no auth enforcement)\", function () {\r",
+                  "    pm.response.to.have.status(200);\r",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "wrongToken",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/1",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "1"]
+            },
+            "description": "jsonplaceholder does not implement real auth, so a request with an invalid bearer token still returns 200 instead of 401. This is intentionally left as a documented finding rather than a hidden bug: it demonstrates the difference between an API that fails loudly (401, caught at the integration boundary) and one that fails silently (200, bad session flows downstream and corrupts data quietly). In a real PMS integration, this is the difference between catching a stale token immediately versus discovering it days later when bookings stop reconciling."
+          },
+          "response": []
+        },
+        {
+          "name": "SILENT FAILURE - rate limiting not enforced",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"SILENT FAILURE: repeated request not throttled\", function () {\r",
+                  "    pm.response.to.have.status(200);\r",
+                  "});"
+                ],
+                "type": "text/javascript",
+                "packages": {},
+                "requests": {}
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/1",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "1"]
+            },
+            "description": "jsonplaceholder has no rate limiting, so a single request cannot fully demonstrate 429 behavior; a single call always returns 200. Documented limitation: a real investigation of this failure mode requires the Collection Runner set to N iterations (or a scripted loop) to confirm whether throttling kicks in under burst load. Included here as the honest version of the test rather than an assertion the mock API can't actually back up. In a real PMS integration, unthrottled retries during an outage are a common cause of duplicate booking writes."
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://jsonplaceholder.typicode.com",
+      "type": "string"
+    }
+  ]
+}
